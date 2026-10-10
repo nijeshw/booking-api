@@ -1,0 +1,10 @@
+node_modules
+package-lock.json
+dist
+generated
+coverage
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

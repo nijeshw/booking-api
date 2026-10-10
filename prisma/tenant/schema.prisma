@@ -1,0 +1,351 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../../generated/tenant"
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("TENANT_DATABASE_URL")
+}
+
+enum LocationType {
+  PHYSICAL
+  MOBILE
+  ONLINE
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  NOT_REQUIRED
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum DepositMode {
+  NONE
+  FULL
+  FIXED
+  PERCENT
+}
+
+enum NotificationKind {
+  BOOKING_CONFIRMATION_CUSTOMER
+  BOOKING_CONFIRMATION_BUSINESS
+  BOOKING_REMINDER_CUSTOMER
+  BOOKING_CANCELLED_CUSTOMER
+  BOOKING_CANCELLED_BUSINESS
+  BOOKING_RESCHEDULED_CUSTOMER
+  BOOKING_RESCHEDULED_BUSINESS
+  PAYMENT_CONFIRMATION_CUSTOMER
+  PAYMENT_RECEIVED_BUSINESS
+}
+
+enum NotificationStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+/// One row per tenant database. The database itself is the tenant boundary.
+model BusinessProfile {
+  id           String       @id @default(uuid()) @db.Uuid
+  singletonKey Int          @unique @default(1)
+  name         String
+  description  String?
+  category     String
+  locationType LocationType
+  email        String?
+  phone        String?
+  website      String?
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  postcode     String?
+  country      String       @default("GB")
+  logoUrl      String?
+  brandColor   String?
+  slug         String       @unique
+  timezone     String
+  currency     String       @db.Char(3)
+  indexable    Boolean      @default(true)
+  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(3)
+}
+
+/// One row per setting key. Missing keys use the default in the settings registry.
+model BusinessSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+}
+
+model BookingPolicy {
+  id                        String      @id @default(uuid()) @db.Uuid
+  singletonKey              Int         @unique @default(1)
+  minNoticeMinutes          Int         @default(60)
+  maxAdvanceDays            Int         @default(60)
+  cancellationWindowMinutes Int         @default(1440)
+  allowCustomerCancel       Boolean     @default(true)
+  allowCustomerReschedule   Boolean     @default(true)
+  requireCustomerEmail      Boolean     @default(true)
+  requireCustomerPhone      Boolean     @default(false)
+  depositMode               DepositMode @default(NONE)
+  slotIntervalMinutes       Int         @default(15)
+  reminderLeadMinutes       Int         @default(1440)
+  allowAnyStaff             Boolean     @default(true)
+  createdAt                 DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt                 DateTime    @updatedAt @db.Timestamptz(3)
+}
+
+model ServiceCategory {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  services Service[]
+}
+
+model Service {
+  id                   String   @id @default(uuid()) @db.Uuid
+  categoryId           String?  @db.Uuid
+  name                 String
+  description          String?
+  durationMinutes      Int
+  priceAmountMinor     Int
+  currency             String   @db.Char(3)
+  depositAmountMinor   Int?
+  depositPercent       Int?
+  bufferBeforeMinutes  Int      @default(0)
+  bufferAfterMinutes   Int      @default(0)
+  active               Boolean  @default(true)
+  onlineBookingEnabled Boolean  @default(true)
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @db.Timestamptz(3)
+
+  category     ServiceCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  staffMembers StaffService[]
+  appointments Appointment[]
+
+  @@index([active, onlineBookingEnabled])
+}
+
+/// userId is the master User id. PostgreSQL cannot enforce that foreign key across databases.
+model StaffMember {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @db.Uuid
+  name      String
+  email     String?
+  phone     String?
+  bio       String?
+  imageUrl  String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  services     StaffService[]
+  weeklyHours  WeeklyHours[]
+  timeOff      TimeOff[]
+  appointments Appointment[]
+}
+
+model StaffService {
+  staffId   String @db.Uuid
+  serviceId String @db.Uuid
+
+  staff   StaffMember @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  service Service     @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([staffId, serviceId])
+}
+
+/// staffId null means the business opening hours. Otherwise the row belongs to one staff member.
+model WeeklyHours {
+  id          String  @id @default(uuid()) @db.Uuid
+  staffId     String? @db.Uuid
+  weekday     Int
+  startMinute Int
+  endMinute   Int
+
+  staff StaffMember? @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId, weekday])
+}
+
+model TimeOff {
+  id       String   @id @default(uuid()) @db.Uuid
+  staffId  String?  @db.Uuid
+  startsAt DateTime @db.Timestamptz(3)
+  endsAt   DateTime @db.Timestamptz(3)
+  reason   String?
+
+  staff StaffMember? @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId, startsAt, endsAt])
+}
+
+model Customer {
+  id         String    @id @default(uuid()) @db.Uuid
+  firstName  String
+  lastName   String
+  email      String?
+  phone      String?
+  notes      String?
+  archivedAt DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
+
+  appointments Appointment[]
+  payments     Payment[]
+
+  @@index([email])
+  @@index([phone])
+  @@index([archivedAt])
+}
+
+model Appointment {
+  id                  String            @id @default(uuid()) @db.Uuid
+  customerId          String            @db.Uuid
+  serviceId           String            @db.Uuid
+  staffId             String            @db.Uuid
+  status              AppointmentStatus @default(CONFIRMED)
+  startAt             DateTime          @db.Timestamptz(3)
+  endAt               DateTime          @db.Timestamptz(3)
+  /// Start of the blocked range, including buffer before. Used by the overlap constraint.
+  blockStart          DateTime          @db.Timestamptz(3)
+  /// End of the blocked range, including buffer after. Used by the overlap constraint.
+  blockEnd            DateTime          @db.Timestamptz(3)
+  bufferBeforeMinutes Int
+  bufferAfterMinutes  Int
+  priceAmountMinor    Int
+  currency            String            @db.Char(3)
+  depositAmountMinor  Int               @default(0)
+  customerNote        String?
+  internalNote        String?
+  /// SHA-256 of the customer manage link. The raw token is only in the email.
+  manageTokenHash     String?           @unique
+  createdAt           DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime          @updatedAt @db.Timestamptz(3)
+
+  customer Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  service  Service     @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  staff    StaffMember @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  payments Payment[]
+
+  @@index([staffId, startAt])
+  @@index([customerId, startAt])
+  @@index([serviceId, startAt])
+  @@index([status, startAt])
+}
+
+model Payment {
+  id                    String        @id @default(uuid()) @db.Uuid
+  appointmentId         String        @db.Uuid
+  customerId            String        @db.Uuid
+  amountMinor           Int
+  currency              String        @db.Char(3)
+  status                PaymentStatus
+  stripePaymentIntentId String?       @unique
+  createdAt             DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime      @updatedAt @db.Timestamptz(3)
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+  customer    Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@index([appointmentId])
+  @@index([status])
+}
+
+model NotificationJob {
+  id            String             @id @default(uuid()) @db.Uuid
+  kind          NotificationKind
+  status        NotificationStatus @default(PENDING)
+  appointmentId String?            @db.Uuid
+  runAt         DateTime           @db.Timestamptz(3)
+  attempts      Int                @default(0)
+  lastError     String?
+  payload       Json
+  createdAt     DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime           @updatedAt @db.Timestamptz(3)
+
+  @@index([status, runAt])
+}
+
+/// Roles that exist in this business. One person has one role here, and a different role in another business.
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  name        String           @unique
+  label       String
+  system      Boolean          @default(false)
+  users       RoleUser[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id    String           @id @db.Uuid
+  key   String           @unique
+  label String
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+/// Master user id for someone who can work in this business. PostgreSQL cannot enforce that foreign key across databases.
+model RoleUser {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @db.Uuid
+  roleId    String   @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  role Role @relation(fields: [roleId], references: [id])
+
+  @@index([roleId])
+}
+
+model InboxNotice {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  kind      String
+  title     String
+  body      String
+  readAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, createdAt])
+}
+
+model AuditEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @db.Uuid
+  action      String
+  entity      String
+  entityId    String?
+  metadata    Json?
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}

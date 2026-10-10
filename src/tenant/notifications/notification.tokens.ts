@@ -1,0 +1,1 @@
+export const BOOKING_NOTIFIER = Symbol('BOOKING_NOTIFIER');

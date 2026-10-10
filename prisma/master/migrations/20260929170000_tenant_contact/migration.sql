@@ -1,0 +1,6 @@
+ALTER TABLE "Tenant" ADD COLUMN "email" TEXT;
+ALTER TABLE "Tenant" ADD COLUMN "phone" TEXT;
+ALTER TABLE "Tenant" ADD COLUMN "addressLine1" TEXT;
+ALTER TABLE "Tenant" ADD COLUMN "city" TEXT;
+ALTER TABLE "Tenant" ADD COLUMN "postcode" TEXT;
+ALTER TABLE "Tenant" ADD COLUMN "country" TEXT;

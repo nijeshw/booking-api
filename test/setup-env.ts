@@ -1,0 +1,9 @@
+process.env.NODE_ENV = 'test';
+process.env.PORT = '3000';
+process.env.APP_URL = 'http://localhost:5173';
+process.env.WEB_ORIGIN = 'http://localhost:5173';
+process.env.AUTH_SECRET = 'test-only-auth-secret-32chars-min';
+process.env.MASTER_DATABASE_URL =
+  'postgresql://nexora:nexora@example.invalid:5432/nexora_master?sslmode=require';
+process.env.TENANT_DATABASE_URL =
+  'postgresql://nexora:nexora@example.invalid:5432/nexora_tenant_dev?sslmode=require';

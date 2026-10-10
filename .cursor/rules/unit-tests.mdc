@@ -1,0 +1,16 @@
+---
+description: Require unit tests with every new API module
+alwaysApply: true
+---
+
+# Unit tests
+
+Ship unit tests in the same change as every new module, endpoint, service, or validator. Do not add the functionality first and leave tests for later.
+
+- Runner: Jest. Command: `yarn test`.
+- Put `*.spec.ts` next to the source file it covers.
+- Test the behavior: the success path, invalid input, and the important failure.
+- Unit tests call the function or class with fakes. Do not open PostgreSQL, Stripe, or the network.
+- When the HTTP contract is the behavior, add `test/*.e2e-spec.ts` as well.
+
+Run `yarn test` and fix failures before finishing the change.

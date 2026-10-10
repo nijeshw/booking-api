@@ -1,0 +1,30 @@
+CREATE TYPE "RoleName" AS ENUM ('OWNER', 'MANAGER', 'STAFF');
+
+CREATE TABLE "Role" (
+    "id" UUID NOT NULL,
+    "name" "RoleName" NOT NULL,
+
+    CONSTRAINT "Role_pkey" PRIMARY KEY ("id")
+);
+
+CREATE UNIQUE INDEX "Role_name_key" ON "Role"("name");
+
+INSERT INTO "Role" ("id", "name") VALUES
+    ('11111111-1111-4111-8111-111111111101', 'OWNER'),
+    ('11111111-1111-4111-8111-111111111102', 'MANAGER'),
+    ('11111111-1111-4111-8111-111111111103', 'STAFF');
+
+CREATE TABLE "RoleUser" (
+    "id" UUID NOT NULL,
+    "userId" UUID NOT NULL,
+    "roleId" UUID NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "RoleUser_pkey" PRIMARY KEY ("id")
+);
+
+CREATE UNIQUE INDEX "RoleUser_userId_key" ON "RoleUser"("userId");
+CREATE INDEX "RoleUser_roleId_idx" ON "RoleUser"("roleId");
+
+ALTER TABLE "RoleUser" ADD CONSTRAINT "RoleUser_roleId_fkey" FOREIGN KEY ("roleId") REFERENCES "Role"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

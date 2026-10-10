@@ -1,0 +1,218 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../../generated/master"
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("MASTER_DATABASE_URL")
+}
+
+enum PlatformRole {
+  NONE
+  ADMIN
+}
+
+enum TenantStatus {
+  PROVISIONING
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum UserTenantStatus {
+  INVITED
+  ACTIVE
+  REVOKED
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  UNPAID
+}
+
+enum EmailTokenPurpose {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+}
+
+/// Control-plane account. Appointment and customer rows do not live here.
+model User {
+  id              String       @id @default(uuid()) @db.Uuid
+  email           String       @unique
+  passwordHash    String?
+  name            String?
+  emailVerifiedAt DateTime?    @db.Timestamptz(3)
+  platformRole    PlatformRole @default(NONE)
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+
+  userTenants   UserTenant[]
+  sessions      Session[]
+  oauthAccounts OAuthAccount[]
+  emailTokens   EmailToken[]
+}
+
+model OAuthAccount {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  provider       String
+  providerUserId String
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+}
+
+/// Refresh-token family. Only the hash of the token is stored.
+model Session {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  refreshTokenHash String    @unique
+  familyId         String    @db.Uuid
+  expiresAt        DateTime  @db.Timestamptz(3)
+  revokedAt        DateTime? @db.Timestamptz(3)
+  userAgent        String?
+  ip               String?
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+}
+
+model EmailToken {
+  id        String            @id @default(uuid()) @db.Uuid
+  userId    String            @db.Uuid
+  purpose   EmailTokenPurpose
+  tokenHash String            @unique
+  expiresAt DateTime          @db.Timestamptz(3)
+  usedAt    DateTime?         @db.Timestamptz(3)
+  createdAt DateTime          @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+}
+
+/// Registry row for one business database on the RDS instance.
+model Tenant {
+  id             String       @id @default(uuid()) @db.Uuid
+  slug           String       @unique
+  legalName      String
+  email          String?
+  phone          String?
+  addressLine1   String?
+  city           String?
+  postcode       String?
+  country        String?
+  status         TenantStatus @default(PROVISIONING)
+  databaseName   String       @unique
+  timezone       String       @default("Europe/London")
+  currency       String       @default("GBP") @db.Char(3)
+  ownerUserId    String       @db.Uuid
+  schemaVersion  Int          @default(0)
+  databaseUser   String?
+  databaseSecret String?
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+
+  userTenants  UserTenant[]
+  subscription Subscription?
+  guestAccess  GuestAccess[]
+  auditEvents  AuditEvent[]
+}
+
+/// Which accounts can open a business. The role for that business lives in the tenant database.
+model UserTenant {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  tenantId  String           @db.Uuid
+  status    UserTenantStatus @default(ACTIVE)
+  createdAt DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime         @updatedAt @db.Timestamptz(3)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+}
+
+/// Plan limits live in entitlements JSON so pricing changes do not require code branches.
+model Plan {
+  id                 String  @id
+  name               String
+  monthlyAmountMinor Int
+  currency           String  @db.Char(3)
+  trialDays          Int     @default(0)
+  entitlements       Json
+  /// Stripe Price id for Checkout. Empty until the price exists in Stripe.
+  stripePriceId      String? @unique
+  active             Boolean @default(true)
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id                   String             @id @default(uuid()) @db.Uuid
+  tenantId             String             @unique @db.Uuid
+  planId               String
+  status               SubscriptionStatus @default(TRIALING)
+  stripeCustomerId     String?            @unique
+  stripeSubscriptionId String?            @unique
+  trialEndsAt          DateTime?          @db.Timestamptz(3)
+  currentPeriodEnd     DateTime?          @db.Timestamptz(3)
+  cancelAtPeriodEnd    Boolean            @default(false)
+  createdAt            DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime           @updatedAt @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan   Plan   @relation(fields: [planId], references: [id])
+
+  @@index([status])
+}
+
+/// Hash of a guest cancel/reschedule token, so the API can find the tenant database.
+model GuestAccess {
+  tokenHash     String    @id
+  tenantId      String    @db.Uuid
+  appointmentId String    @db.Uuid
+  expiresAt     DateTime  @db.Timestamptz(3)
+  revokedAt     DateTime? @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, appointmentId])
+}
+
+model StripeWebhookEvent {
+  id          String   @id
+  type        String
+  processedAt DateTime @default(now()) @db.Timestamptz(3)
+}
+
+model AuditEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String?  @db.Uuid
+  userId    String?  @db.Uuid
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([action, createdAt])
+}
