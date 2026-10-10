@@ -33,7 +33,7 @@ class MemoryTenantStore implements TenantStore {
   verified = true;
   plan: { id: string; trialDays: number } | null = {
     id: 'trial',
-    trialDays: 14,
+    trialDays: 5,
   };
   tenants: TenantRecord[] = [];
   userTenants: (UserTenantLink & { userId: string })[] = [];
@@ -479,7 +479,7 @@ describe('TenantService', () => {
     ]);
     expect(store.logins[0]?.secret).not.toContain('role-password-value');
     expect(store.trials[0]?.trialEndsAt.toISOString()).toBe(
-      '2026-10-12T12:00:00.000Z',
+      '2026-10-03T12:00:00.000Z',
     );
     expect(store.userTenants[0]?.userId).toBe(USER);
   });

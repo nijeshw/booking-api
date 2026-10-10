@@ -13,7 +13,7 @@ INSERT INTO "Plan" (
     'Free trial',
     0,
     'GBP',
-    14,
+    5,
     '{"maxStaff":null,"maxServices":null,"deposits":true,"onlinePayments":true,"multipleStaff":true,"advancedBookingSettings":true,"customerHistory":true,"reports":true,"advancedReports":true,"customBranding":true,"multipleLocations":true,"teamPermissions":true}'::jsonb,
     NULL,
     true
