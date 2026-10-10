@@ -8,11 +8,8 @@ import { BILLING_STORE, STRIPE_GATEWAY } from './billing.tokens';
 import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
 import { PrismaBillingStore } from './prisma-billing.store';
-import {
-  StripeSdkGateway,
-  UnconfiguredStripeGateway,
-  type StripeGateway,
-} from './stripe.gateway';
+import { StripeSdkGateway, UnconfiguredStripeGateway } from './stripe.gateway';
+import type { StripeGateway } from './stripe.port';
 
 @Module({
   imports: [MasterDatabaseModule, AuthModule, TenancyModule],

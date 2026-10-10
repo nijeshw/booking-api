@@ -1,5 +1,7 @@
-import type { ExecutionContext } from '@nestjs/common';
+import { HttpException, type ExecutionContext } from '@nestjs/common';
 import type { Reflector } from '@nestjs/core';
+import { ALLOW_UNPAID } from '../decorator/tenant.decorator';
+import { BILLING_LOCK_MESSAGE } from '../master/billing/billing-lock';
 import type { TenantService } from '../master/tenancy/tenant.service';
 import type { TenantAccess } from '../master/tenancy/tenant.types';
 import { readTenantSlug, TenantGuard } from './tenant.guard';
@@ -7,6 +9,7 @@ import { readTenantSlug, TenantGuard } from './tenant.guard';
 const access: TenantAccess = {
   userId: 'user-1',
   role: 'OWNER',
+  subscriptionStatus: 'ACTIVE',
   tenant: {
     id: 'tenant-1',
     slug: 'ada-studio',
@@ -107,5 +110,46 @@ describe('TenantGuard', () => {
       ),
     ).resolves.toBe(false);
     expect(tenants.access).not.toHaveBeenCalled();
+  });
+
+  it('blocks the business when the invoice is overdue or unpaid', async () => {
+    const tenants = {
+      access: jest
+        .fn()
+        .mockResolvedValue({ ...access, subscriptionStatus: 'PAST_DUE' }),
+    };
+    const guard = new TenantGuard(
+      tenants as unknown as TenantService,
+      { get: jest.fn().mockReturnValue(undefined) } as unknown as Reflector,
+    );
+
+    await expect(
+      guard.canActivate(contextFor({ header: 'ada-studio', userId: 'user-1' })),
+    ).rejects.toMatchObject({
+      status: 402,
+      message: BILLING_LOCK_MESSAGE,
+    });
+    await expect(
+      guard.canActivate(contextFor({ header: 'ada-studio', userId: 'user-1' })),
+    ).rejects.toBeInstanceOf(HttpException);
+  });
+
+  it('keeps billing available while the invoice is unpaid', async () => {
+    const tenants = {
+      access: jest
+        .fn()
+        .mockResolvedValue({ ...access, subscriptionStatus: 'UNPAID' }),
+    };
+    const reflector = {
+      get: jest.fn((key: string) => (key === ALLOW_UNPAID ? true : undefined)),
+    };
+    const guard = new TenantGuard(
+      tenants as unknown as TenantService,
+      reflector as unknown as Reflector,
+    );
+
+    await expect(
+      guard.canActivate(contextFor({ header: 'ada-studio', userId: 'user-1' })),
+    ).resolves.toBe(true);
   });
 });

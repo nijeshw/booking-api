@@ -13,13 +13,15 @@ import { DateTime } from 'luxon';
 import type { Env } from '../../config/env';
 import { allows } from '../../tenant/roles/permission';
 import type { TenantAccess } from '../tenancy/tenant.types';
+import type { BillingSnapshot } from './billing.snapshot';
 import { BILLING_STORE, STRIPE_GATEWAY } from './billing.tokens';
 import type {
   BillingStore,
   PlanRecord,
+  SubscriptionRecord,
   SubscriptionStatusName,
 } from './billing.store';
-import type { StripeEvent, StripeGateway } from './stripe.gateway';
+import type { StripeEvent, StripeGateway } from './stripe.port';
 
 export type PlanOffer = {
   id: string;
@@ -41,8 +43,16 @@ export type BillingView = {
     currentPeriodEnd: Date | null;
     cancelAtPeriodEnd: boolean;
   } | null;
+  canOpenPortal: boolean;
+  stripe: BillingSnapshot | null;
   plans: PlanOffer[];
 };
+
+const RISK_EVENTS = new Set([
+  'charge.dispute.created',
+  'charge.refunded',
+  'radar.early_fraud_warning.created',
+]);
 
 const STRIPE_STATUS: Record<string, SubscriptionStatusName> = {
   trialing: 'TRIALING',
@@ -73,8 +83,11 @@ export class BillingService {
       this.billing.subscription(access.tenant.id),
       this.billing.listPlans(),
     ]);
+    const canManage = allows(access, 'billing.manage');
     return {
-      canManage: allows(access, 'billing.manage'),
+      canManage,
+      canOpenPortal: canManage && subscription?.stripeCustomerId != null,
+      stripe: await this.stripeDetails(subscription),
       subscription: subscription
         ? {
             planId: subscription.planId,
@@ -89,6 +102,26 @@ export class BillingService {
         : null,
       plans: plans.map(toOffer),
     };
+  }
+
+  private async stripeDetails(
+    subscription: SubscriptionRecord | null,
+  ): Promise<BillingSnapshot | null> {
+    const customerId = subscription?.stripeCustomerId ?? null;
+    if (!this.stripe.configured() || customerId == null) {
+      return null;
+    }
+    try {
+      return await this.stripe.billingSnapshot({
+        customerId,
+        subscriptionId: subscription?.stripeSubscriptionId ?? null,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Stripe billing details are unavailable: ${error instanceof Error ? error.message : 'unknown'}`,
+      );
+      return null;
+    }
   }
 
   async checkout(
@@ -135,6 +168,26 @@ export class BillingService {
     return session;
   }
 
+  async portal(access: TenantAccess): Promise<{ url: string }> {
+    if (!allows(access, 'billing.manage')) {
+      throw new ForbiddenException('You do not have access to do that');
+    }
+    if (!this.stripe.configured()) {
+      throw new ServiceUnavailableException('Payments are not configured');
+    }
+    const current = await this.billing.subscription(access.tenant.id);
+    if (!current?.stripeCustomerId) {
+      throw new BadRequestException('Subscribe before managing billing');
+    }
+    const origin = this.config
+      .get('WEB_ORIGIN', { infer: true })
+      .replace(/\/$/, '');
+    return this.stripe.createPortal({
+      customerId: current.stripeCustomerId,
+      returnUrl: `${origin}/businesses/${access.tenant.slug}/billing`,
+    });
+  }
+
   async handleWebhook(
     payload: Buffer,
     signature: string,
@@ -154,8 +207,20 @@ export class BillingService {
   }
 
   private async apply(event: StripeEvent): Promise<void> {
-    if (event.type === 'checkout.session.completed') {
-      await this.applyCheckout(event.object);
+    if (
+      event.type === 'checkout.session.completed' ||
+      event.type === 'checkout.session.async_payment_succeeded'
+    ) {
+      await this.applyCheckout(
+        event.object,
+        event.type === 'checkout.session.async_payment_succeeded'
+          ? 'ACTIVE'
+          : undefined,
+      );
+      return;
+    }
+    if (event.type === 'checkout.session.async_payment_failed') {
+      await this.applyCheckout(event.object, 'INCOMPLETE');
       return;
     }
     if (
@@ -165,23 +230,41 @@ export class BillingService {
       await this.applySubscription(event.object);
       return;
     }
-    if (event.type === 'invoice.payment_failed') {
-      const subscriptionId = stringField(event.object, 'subscription');
+    if (
+      event.type === 'invoice.paid' ||
+      event.type === 'invoice.payment_failed'
+    ) {
+      const subscriptionId = subscriptionIdFrom(event.object);
       if (subscriptionId) {
         await this.billing.applySubscription({
           stripeSubscriptionId: subscriptionId,
           planId: null,
-          status: 'PAST_DUE',
-          currentPeriodEnd: null,
+          status: event.type === 'invoice.paid' ? 'ACTIVE' : 'PAST_DUE',
+          currentPeriodEnd:
+            event.type === 'invoice.paid'
+              ? unixDate(event.object.period_end)
+              : null,
           cancelAtPeriodEnd: null,
         });
       }
       return;
     }
+    if (RISK_EVENTS.has(event.type)) {
+      const subscriptionId = await this.stripe.subscriptionIdForRisk(event);
+      this.logger.log(
+        subscriptionId
+          ? `Stripe ${event.type} for subscription ${subscriptionId}`
+          : `Stripe ${event.type} is not tied to a subscription`,
+      );
+      return;
+    }
     this.logger.log(`Ignored Stripe event ${event.type}`);
   }
 
-  private async applyCheckout(object: Record<string, unknown>): Promise<void> {
+  private async applyCheckout(
+    object: Record<string, unknown>,
+    forcedStatus?: SubscriptionStatusName,
+  ): Promise<void> {
     const metadata = recordField(object, 'metadata');
     const tenantId = metadata ? stringField(metadata, 'tenantId') : null;
     const planId = metadata ? stringField(metadata, 'planId') : null;
@@ -193,7 +276,7 @@ export class BillingService {
     await this.billing.applyCheckout({
       tenantId,
       planId,
-      status: paid ? 'ACTIVE' : 'INCOMPLETE',
+      status: forcedStatus ?? (paid ? 'ACTIVE' : 'INCOMPLETE'),
       stripeCustomerId: stringField(object, 'customer'),
       stripeSubscriptionId: stringField(object, 'subscription'),
     });
@@ -230,6 +313,29 @@ function toOffer(plan: PlanRecord): PlanOffer {
     currency: plan.currency,
     purchasable: plan.monthlyAmountMinor > 0 && plan.stripePriceId !== null,
   };
+}
+
+function subscriptionIdFrom(object: Record<string, unknown>): string | null {
+  const direct = stringField(object, 'subscription');
+  if (direct) {
+    return direct;
+  }
+  const parent = recordField(object, 'parent');
+  const details = parent ? recordField(parent, 'subscription_details') : null;
+  const subscription = details?.subscription;
+  if (typeof subscription === 'string' && subscription.length > 0) {
+    return subscription;
+  }
+  if (
+    typeof subscription === 'object' &&
+    subscription !== null &&
+    'id' in subscription &&
+    typeof subscription.id === 'string' &&
+    subscription.id.length > 0
+  ) {
+    return subscription.id;
+  }
+  return null;
 }
 
 function stringField(

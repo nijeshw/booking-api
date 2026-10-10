@@ -21,6 +21,7 @@ export type TenantRecord = {
 
 export type UserTenantLink = {
   status: 'INVITED' | 'ACTIVE' | 'REVOKED';
+  subscriptionStatus: string | null;
   tenant: TenantRecord;
 };
 
@@ -46,6 +47,7 @@ export type TenantAccess = {
   userId: string;
   role: TenantRole;
   permissions?: string[];
+  subscriptionStatus?: string | null;
   tenant: TenantRecord;
 };
 

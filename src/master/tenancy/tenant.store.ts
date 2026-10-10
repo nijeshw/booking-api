@@ -29,6 +29,7 @@ export interface TenantStore {
   listActive(): Promise<TenantRecord[]>;
   listForUser(userId: string): Promise<UserTenantLink[]>;
   findUserTenant(userId: string, slug: string): Promise<UserTenantLink | null>;
+  subscriptionStatus(tenantId: string): Promise<string | null>;
   findUserByEmail(
     email: string,
   ): Promise<{ id: string; email: string; name: string | null } | null>;

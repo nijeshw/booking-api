@@ -24,6 +24,7 @@ import type { TenantAccess } from '../../master/tenancy/tenant.types';
 const access: TenantAccess = {
   userId: 'user-1',
   role: 'OWNER',
+  subscriptionStatus: 'ACTIVE',
   tenant: {
     id: 'tenant-1',
     slug: 'ada-studio',

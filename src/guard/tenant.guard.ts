@@ -1,6 +1,16 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  HttpException,
+  HttpStatus,
+  Injectable,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { TENANT_ACCESS } from '../decorator/tenant.decorator';
+import { ALLOW_UNPAID, TENANT_ACCESS } from '../decorator/tenant.decorator';
+import {
+  BILLING_LOCK_MESSAGE,
+  subscriptionLocksApp,
+} from '../master/billing/billing-lock';
 import { TenantService } from '../master/tenancy/tenant.service';
 import type { PermissionKey } from '../tenant/roles/permission';
 import type {
@@ -51,6 +61,19 @@ export class TenantGuard implements CanActivate {
       roles: options.roles,
       statuses: options.statuses,
     });
+    const allowUnpaid = this.reflector.get<boolean>(
+      ALLOW_UNPAID,
+      context.getHandler(),
+    );
+    if (
+      !allowUnpaid &&
+      subscriptionLocksApp(request.tenantAccess.subscriptionStatus)
+    ) {
+      throw new HttpException(
+        BILLING_LOCK_MESSAGE,
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
     return true;
   }
 }

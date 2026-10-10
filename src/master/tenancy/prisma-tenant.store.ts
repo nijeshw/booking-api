@@ -26,6 +26,44 @@ const tenantSelect = {
   schemaVersion: true,
 } as const;
 
+const linkSelect = {
+  status: true,
+  tenant: {
+    select: {
+      ...tenantSelect,
+      subscription: { select: { status: true } },
+    },
+  },
+} as const;
+
+function toUserTenantLink(row: {
+  status: UserTenantLink['status'];
+  tenant: TenantRecord & { subscription: { status: string } | null };
+}): UserTenantLink {
+  const source = row.tenant;
+  return {
+    status: row.status,
+    subscriptionStatus: source.subscription?.status ?? null,
+    tenant: {
+      id: source.id,
+      slug: source.slug,
+      legalName: source.legalName,
+      status: source.status,
+      databaseName: source.databaseName,
+      timezone: source.timezone,
+      currency: source.currency,
+      email: source.email,
+      phone: source.phone,
+      addressLine1: source.addressLine1,
+      city: source.city,
+      postcode: source.postcode,
+      country: source.country,
+      ownerUserId: source.ownerUserId,
+      schemaVersion: source.schemaVersion,
+    },
+  };
+}
+
 @Injectable()
 export class PrismaTenantStore implements TenantStore {
   constructor(private readonly prisma: MasterPrismaService) {}
@@ -55,12 +93,9 @@ export class PrismaTenantStore implements TenantStore {
   async listForUser(userId: string): Promise<UserTenantLink[]> {
     const rows = await this.prisma.userTenant.findMany({
       where: { userId },
-      select: {
-        status: true,
-        tenant: { select: tenantSelect },
-      },
+      select: linkSelect,
     });
-    return rows;
+    return rows.map((row) => toUserTenantLink(row));
   }
 
   async findUserTenant(
@@ -69,12 +104,17 @@ export class PrismaTenantStore implements TenantStore {
   ): Promise<UserTenantLink | null> {
     const row = await this.prisma.userTenant.findFirst({
       where: { userId, tenant: { slug } },
-      select: {
-        status: true,
-        tenant: { select: tenantSelect },
-      },
+      select: linkSelect,
     });
-    return row;
+    return row ? toUserTenantLink(row) : null;
+  }
+
+  async subscriptionStatus(tenantId: string): Promise<string | null> {
+    const row = await this.prisma.subscription.findUnique({
+      where: { tenantId },
+      select: { status: true },
+    });
+    return row?.status ?? null;
   }
 
   findUserByEmail(

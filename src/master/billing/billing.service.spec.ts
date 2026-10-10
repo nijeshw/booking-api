@@ -15,15 +15,18 @@ import type {
   SubscriptionRecord,
   SubscriptionUpdate,
 } from './billing.store';
+import type { BillingSnapshot } from './billing.snapshot';
 import type {
   CheckoutRequest,
+  PortalRequest,
   StripeEvent,
   StripeGateway,
-} from './stripe.gateway';
+} from './stripe.port';
 
 const access: TenantAccess = {
   userId: 'user-1',
   role: 'OWNER',
+  subscriptionStatus: 'ACTIVE',
   tenant: {
     id: 'tenant-1',
     slug: 'ada-studio',
@@ -72,6 +75,7 @@ class MemoryBilling implements BillingStore {
     currency: 'GBP',
     status: 'TRIALING',
     stripeCustomerId: null,
+    stripeSubscriptionId: null,
     trialEndsAt: DateTime.fromISO('2026-10-12T00:00:00.000Z', {
       zone: 'utc',
     }).toJSDate(),
@@ -128,6 +132,16 @@ class FakeStripe implements StripeGateway {
   event: StripeEvent | null = null;
   lastPriceId: string | null = null;
   lastTenantId: string | null = null;
+  lastPortalCustomer: string | null = null;
+  lastReturnUrl: string | null = null;
+  riskCalls = 0;
+  snapshot: BillingSnapshot = {
+    card: null,
+    renewal: null,
+    invoices: [],
+  };
+  failSnapshot = false;
+  snapshotCalls = 0;
 
   configured() {
     return this.configuredFlag;
@@ -139,11 +153,30 @@ class FakeStripe implements StripeGateway {
     return Promise.resolve({ url: 'https://checkout.stripe.test/session' });
   }
 
+  createPortal(input: PortalRequest) {
+    this.lastPortalCustomer = input.customerId;
+    this.lastReturnUrl = input.returnUrl;
+    return Promise.resolve({ url: 'https://billing.stripe.test/portal' });
+  }
+
+  billingSnapshot() {
+    this.snapshotCalls += 1;
+    if (this.failSnapshot) {
+      return Promise.reject(new Error('Stripe is unavailable'));
+    }
+    return Promise.resolve(this.snapshot);
+  }
+
   readEvent(): StripeEvent {
     if (this.failSignature || !this.event) {
       throw new Error('Invalid signature');
     }
     return this.event;
+  }
+
+  subscriptionIdForRisk() {
+    this.riskCalls += 1;
+    return Promise.resolve('sub_1');
   }
 }
 
@@ -165,7 +198,75 @@ describe('BillingService', () => {
     expect(view.plans.find((item) => item.id === 'trial')?.purchasable).toBe(
       false,
     );
+    expect(view.canOpenPortal).toBe(false);
+    expect(view.stripe).toBeNull();
     expect(JSON.stringify(view)).not.toContain('price_pro');
+  });
+
+  it('includes the card, next payment, and invoices from Stripe', async () => {
+    const store = new MemoryBilling();
+    store.current = {
+      ...store.current!,
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1',
+    };
+    const stripe = new FakeStripe();
+    const createdAt = DateTime.fromISO('2026-10-01T00:00:00.000Z', {
+      zone: 'utc',
+    }).toJSDate();
+    stripe.snapshot = {
+      card: { brand: 'visa', last4: '4242' },
+      renewal: {
+        amountMinor: 1500,
+        currency: 'gbp',
+        at: DateTime.fromISO('2026-11-01T00:00:00.000Z', {
+          zone: 'utc',
+        }).toJSDate(),
+      },
+      invoices: [
+        {
+          id: 'in_1',
+          number: 'NX-0001',
+          status: 'paid',
+          amountMinor: 1500,
+          currency: 'gbp',
+          createdAt,
+          hostedUrl: 'https://invoice.stripe.test/in_1',
+        },
+      ],
+    };
+    const { service } = serviceFor(store, stripe);
+    const view = await service.view(access);
+    expect(stripe.snapshotCalls).toBe(1);
+    expect(view.stripe).toEqual(stripe.snapshot);
+  });
+
+  it('still shows the plan when Stripe details fail', async () => {
+    const store = new MemoryBilling();
+    store.current = {
+      ...store.current!,
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1',
+    };
+    const stripe = new FakeStripe();
+    stripe.failSnapshot = true;
+    const { service } = serviceFor(store, stripe);
+    const view = await service.view(access);
+    expect(view.subscription?.planId).toBe('trial');
+    expect(view.stripe).toBeNull();
+  });
+
+  it('offers the portal only after Stripe has a customer', async () => {
+    const store = new MemoryBilling();
+    store.current = {
+      ...store.current!,
+      stripeCustomerId: 'cus_1',
+    };
+    const { service } = serviceFor(store);
+    const view = await service.view(access);
+    expect(view.canOpenPortal).toBe(true);
+    const staff = await service.view({ ...access, role: 'STAFF' });
+    expect(staff.canOpenPortal).toBe(false);
   });
 
   it('refuses to sell the trial plan', async () => {
@@ -197,6 +298,46 @@ describe('BillingService', () => {
     const { service } = serviceFor();
     await expect(
       service.checkout({ ...access, role: 'STAFF' }, 'pro'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('opens the customer portal for the Stripe customer', async () => {
+    const store = new MemoryBilling();
+    store.current = { ...store.current!, stripeCustomerId: 'cus_1' };
+    const { service, stripe } = serviceFor(store);
+    await expect(service.portal(access)).resolves.toEqual({
+      url: 'https://billing.stripe.test/portal',
+    });
+    expect(stripe.lastPortalCustomer).toBe('cus_1');
+    expect(stripe.lastReturnUrl).toBe(
+      'http://localhost:5173/businesses/ada-studio/billing',
+    );
+  });
+
+  it('refuses the portal before a Stripe customer exists', async () => {
+    const { service } = serviceFor();
+    await expect(service.portal(access)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('refuses the portal when Stripe is not configured', async () => {
+    const store = new MemoryBilling();
+    store.current = { ...store.current!, stripeCustomerId: 'cus_1' };
+    const stripe = new FakeStripe();
+    stripe.configuredFlag = false;
+    const { service } = serviceFor(store, stripe);
+    await expect(service.portal(access)).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+  });
+
+  it('refuses the portal for someone who cannot manage billing', async () => {
+    const store = new MemoryBilling();
+    store.current = { ...store.current!, stripeCustomerId: 'cus_1' };
+    const { service } = serviceFor(store);
+    await expect(
+      service.portal({ ...access, role: 'STAFF' }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
@@ -242,6 +383,79 @@ describe('BillingService', () => {
     });
     await service.handleWebhook(Buffer.from('{}'), 'sig');
     expect(store.checkouts).toHaveLength(1);
+  });
+
+  it('activates a subscription when a delayed checkout payment succeeds', async () => {
+    const stripe = new FakeStripe();
+    stripe.event = {
+      id: 'evt_async_ok',
+      type: 'checkout.session.async_payment_succeeded',
+      object: {
+        payment_status: 'unpaid',
+        customer: 'cus_1',
+        subscription: 'sub_1',
+        metadata: { tenantId: 'tenant-1', planId: 'pro' },
+      },
+    };
+    const { service, store } = serviceFor(new MemoryBilling(), stripe);
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+    expect(store.checkouts[0]).toMatchObject({
+      status: 'ACTIVE',
+      stripeSubscriptionId: 'sub_1',
+    });
+  });
+
+  it('leaves checkout incomplete when a delayed payment fails', async () => {
+    const stripe = new FakeStripe();
+    stripe.event = {
+      id: 'evt_async_fail',
+      type: 'checkout.session.async_payment_failed',
+      object: {
+        payment_status: 'unpaid',
+        customer: 'cus_1',
+        subscription: 'sub_1',
+        metadata: { tenantId: 'tenant-1', planId: 'pro' },
+      },
+    };
+    const { service, store } = serviceFor(new MemoryBilling(), stripe);
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+    expect(store.checkouts[0]?.status).toBe('INCOMPLETE');
+  });
+
+  it('marks the subscription active when an invoice is paid', async () => {
+    const stripe = new FakeStripe();
+    stripe.event = {
+      id: 'evt_paid',
+      type: 'invoice.paid',
+      object: {
+        period_end: 1_797_120_000,
+        parent: { subscription_details: { subscription: 'sub_1' } },
+      },
+    };
+    const { service, store } = serviceFor(new MemoryBilling(), stripe);
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+    expect(store.updates[0]).toMatchObject({
+      stripeSubscriptionId: 'sub_1',
+      status: 'ACTIVE',
+      currentPeriodEnd: DateTime.fromSeconds(1_797_120_000, {
+        zone: 'utc',
+      }).toJSDate(),
+    });
+  });
+
+  it('records a dispute against the subscription without changing the plan', async () => {
+    const stripe = new FakeStripe();
+    stripe.event = {
+      id: 'evt_dispute',
+      type: 'charge.dispute.created',
+      object: { payment_intent: 'pi_1' },
+    };
+    const { service, store } = serviceFor(new MemoryBilling(), stripe);
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+    expect(stripe.riskCalls).toBe(1);
+    expect(store.events).toEqual(['evt_dispute']);
+    expect(store.updates).toEqual([]);
+    expect(store.checkouts).toEqual([]);
   });
 
   it('marks the subscription past due when an invoice fails', async () => {

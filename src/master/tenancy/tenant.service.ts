@@ -1,6 +1,8 @@
 import {
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   Logger,
@@ -13,6 +15,10 @@ import { randomUUID } from 'node:crypto';
 import { AuthService } from '../../auth/auth.service';
 import { CLOCK } from '../../common/clock';
 import { plusDays, utcNow } from '../../common/time';
+import {
+  PUBLIC_LOCK_MESSAGE,
+  subscriptionLocksApp,
+} from '../billing/billing-lock';
 import { tenantDatabaseName } from '../database/database-name';
 import { TenantLogins } from '../database/tenant-logins';
 import {
@@ -142,6 +148,10 @@ export class TenantService {
     if (!tenant || tenant.status !== 'ACTIVE') {
       throw new NotFoundException('Business not found');
     }
+    const status = await this.store.subscriptionStatus(tenant.id);
+    if (subscriptionLocksApp(status)) {
+      throw new HttpException(PUBLIC_LOCK_MESSAGE, HttpStatus.PAYMENT_REQUIRED);
+    }
     return tenant;
   }
 
@@ -172,10 +182,14 @@ export class TenantService {
     if (input.roles && !input.roles.includes(role)) {
       throw new ForbiddenException('You do not have access to do that');
     }
+    const subscriptionStatus = await this.store.subscriptionStatus(
+      link.tenant.id,
+    );
     return {
       userId: input.userId,
       role,
       permissions,
+      subscriptionStatus,
       tenant: link.tenant,
     };
   }

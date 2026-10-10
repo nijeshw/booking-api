@@ -11,7 +11,11 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { parseBody } from '../../common/parse-body';
-import { CurrentTenant, TenantAccess } from '../../decorator/tenant.decorator';
+import {
+  AllowUnpaidSubscription,
+  CurrentTenant,
+  TenantAccess,
+} from '../../decorator/tenant.decorator';
 import { AuthGuard } from '../../guard/auth.guard';
 import { TenantGuard } from '../../guard/tenant.guard';
 import type { TenantAccess as Access } from '../tenancy/tenant.types';
@@ -30,6 +34,7 @@ export class BillingController {
 
   @Get('subscription')
   @UseGuards(AuthGuard, TenantGuard)
+  @AllowUnpaidSubscription()
   @TenantAccess({ permission: 'billing.view' })
   subscription(@CurrentTenant() access: Access) {
     return this.billing.view(access);
@@ -37,6 +42,7 @@ export class BillingController {
 
   @Post('checkout')
   @UseGuards(AuthGuard, TenantGuard)
+  @AllowUnpaidSubscription()
   @TenantAccess({ permission: 'billing.manage' })
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   checkout(@CurrentTenant() access: Access, @Body() body: unknown) {
@@ -44,6 +50,15 @@ export class BillingController {
       access,
       parseBody(checkoutSchema, body).planId,
     );
+  }
+
+  @Post('portal')
+  @UseGuards(AuthGuard, TenantGuard)
+  @AllowUnpaidSubscription()
+  @TenantAccess({ permission: 'billing.manage' })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  portal(@CurrentTenant() access: Access) {
+    return this.billing.portal(access);
   }
 
   @Post('webhook')

@@ -7,6 +7,7 @@ import type { SettingStore } from './setting.store';
 const access: TenantAccess = {
   userId: 'user-1',
   role: 'OWNER',
+  subscriptionStatus: 'ACTIVE',
   tenant: {
     id: 'tenant-1',
     slug: 'ada-studio',

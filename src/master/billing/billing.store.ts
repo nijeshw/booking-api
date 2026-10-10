@@ -17,6 +17,7 @@ export type SubscriptionRecord = {
   currency: string;
   status: SubscriptionStatusName;
   stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
   trialEndsAt: Date | null;
   currentPeriodEnd: Date | null;
   cancelAtPeriodEnd: boolean;

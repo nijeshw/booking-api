@@ -1,12 +1,15 @@
 import {
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import type { AuthService } from '../../auth/auth.service';
 import { DateTime } from 'luxon';
+import { PUBLIC_LOCK_MESSAGE } from '../billing/billing-lock';
 import { sealSecret } from '../database/credential';
 import { TenantService } from './tenant.service';
 import type { RoleStore } from '../../tenant/roles/role.store';
@@ -36,6 +39,7 @@ class MemoryTenantStore implements TenantStore {
   userTenants: (UserTenantLink & { userId: string })[] = [];
   users: { id: string; email: string; name: string | null }[] = [];
   trials: { tenantId: string; trialEndsAt: Date }[] = [];
+  subscriptions = new Map<string, string>();
   logins: { id: string; user: string; secret: string }[] = [];
 
   isEmailVerified() {
@@ -66,6 +70,10 @@ class MemoryTenantStore implements TenantStore {
         (link) => link.userId === userId && link.tenant.slug === slug,
       ) ?? null,
     );
+  }
+
+  subscriptionStatus(tenantId: string) {
+    return Promise.resolve(this.subscriptions.get(tenantId) ?? null);
   }
 
   findUserByEmail(email: string) {
@@ -107,6 +115,7 @@ class MemoryTenantStore implements TenantStore {
     }
     this.userTenants.push({
       status: 'ACTIVE',
+      subscriptionStatus: null,
       tenant,
       userId: input.userId,
     });
@@ -153,6 +162,7 @@ class MemoryTenantStore implements TenantStore {
     this.tenants.push(tenant);
     this.userTenants.push({
       status: 'ACTIVE',
+      subscriptionStatus: 'TRIALING',
       tenant,
       userId: input.ownerUserId,
     });
@@ -438,6 +448,12 @@ const input = {
   slug: 'ada-studio',
   timezone: 'Europe/London',
   currency: 'GBP',
+  email: null,
+  phone: null,
+  addressLine1: null,
+  city: null,
+  postcode: null,
+  country: null,
 };
 
 describe('TenantService', () => {
@@ -530,6 +546,27 @@ describe('TenantService', () => {
     await expect(service.open('missing')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  it('refuses to open a business whose invoice is overdue or unpaid', async () => {
+    const { service, store } = setup();
+    await service.create(USER, input);
+    const tenant = store.tenants[0];
+    if (!tenant) {
+      throw new Error('missing tenant');
+    }
+    store.subscriptions.set(tenant.id, 'PAST_DUE');
+    await expect(service.open('ada-studio')).rejects.toBeInstanceOf(
+      HttpException,
+    );
+    await expect(service.open('ada-studio')).rejects.toMatchObject({
+      message: PUBLIC_LOCK_MESSAGE,
+      status: HttpStatus.PAYMENT_REQUIRED,
+    });
+    store.subscriptions.set(tenant.id, 'ACTIVE');
+    await expect(service.open('ada-studio')).resolves.toMatchObject({
+      slug: 'ada-studio',
+    });
   });
 
   it('lets an owner give a manager access to a second business', async () => {

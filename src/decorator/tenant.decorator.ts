@@ -12,6 +12,11 @@ import type {
 } from '../master/tenancy/tenant.types';
 
 export const TENANT_ACCESS = 'tenant_access';
+export const ALLOW_UNPAID = 'allow_unpaid_subscription';
+
+export function AllowUnpaidSubscription(): MethodDecorator {
+  return SetMetadata(ALLOW_UNPAID, true);
+}
 
 export function TenantAccess(options: {
   permission?: PermissionKey;
