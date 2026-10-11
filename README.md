@@ -45,5 +45,7 @@ yarn build
 `GET /health` is the process check. `GET /health/ready` runs `SELECT 1` on the master database and returns 503 when RDS cannot be reached, without the database error text.
 
 
-Listen webhook on localhost cli 
+Listen Stripe webhook on localhost cli 
 stripe listen --forward-to localhost:3200/billing/webhook --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,customer.subscription.updated,customer.subscription.deleted,invoice.paid,invoice.payment_failed,charge.dispute.created,charge.refunded,radar.early_fraud_warning.created
+
+cloudflared tunnel run --token eyJhIjoiMzJmNGFlNjk0N2VkNDY5NjQwOTMzZDY0MTdmMThhMzEiLCJ0IjoiOTFlNzkxY2YtZmYwNS00ZDBjLWJlNWYtNjBlZDIyZjQxODcyIiwicyI6Ik9UZzFaR1kxTUdJdFkyRmxPQzAwT0RrMExUaGlNV0V0WVRKall6UTBabVprTmpObCJ9
