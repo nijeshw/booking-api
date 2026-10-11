@@ -14,7 +14,8 @@ describe('mail API', () => {
       text: 'Change or cancel: https://example.test/manage/secret-token',
     });
     expect(body.to).toEqual(['bea@example.com']);
-    expect(body.from).toBe('Nexora <no-reply@example.com>');
+    expect(body.from).toBe('Appointiva <no-reply@example.com>');
+    expect(body.tag).toBe('{"app":"appointiva"}');
     expect(body.reply_to).toBe('no-reply@example.com');
     expect(body.sender).toBeNull();
     expect(body.cc).toBeNull();

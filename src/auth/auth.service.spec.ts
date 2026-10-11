@@ -338,7 +338,7 @@ describe('AuthService', () => {
     expect(user.email).toBe('new.person@example.com');
     expect(user.passwordHash).toBeNull();
     expect(store.users).toHaveLength(1);
-    expect(sent[0]?.subject).toBe('Set your Nexora password for Ada Studio');
+    expect(sent[0]?.subject).toBe('Set your Appointiva password for Ada Studio');
     expect(sent[0]?.text).toContain('/reset-password?token=');
     const again = await auth.inviteToBusiness(
       'new.person@example.com',

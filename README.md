@@ -1,6 +1,6 @@
 # booking-api
 
-NestJS API for Nexora. PostgreSQL is AWS RDS. This service does not run a database.
+NestJS API for Appointiva. PostgreSQL is AWS RDS. This service does not run a database.
 
 ## RDS setup
 

@@ -148,7 +148,7 @@ export class AuthService {
   async forgotPassword(email: string): Promise<{ status: 'check-email' }> {
     const user = await this.store.findUserByEmail(email.toLowerCase());
     if (user) {
-      await this.sendPasswordLink(user, 'Reset your Nexora password');
+      await this.sendPasswordLink(user, 'Reset your Appointiva password');
     }
     return { status: 'check-email' };
   }
@@ -187,7 +187,7 @@ export class AuthService {
     if (!user.passwordHash) {
       await this.sendPasswordLink(
         user,
-        `Set your Nexora password for ${businessName}`,
+        `Set your Appointiva password for ${businessName}`,
       );
     }
     return user;
@@ -325,7 +325,7 @@ export class AuthService {
     });
     await this.send(
       user.email,
-      'Verify your Nexora email',
+      'Verify your Appointiva email',
       token,
       'verify-email',
     );
