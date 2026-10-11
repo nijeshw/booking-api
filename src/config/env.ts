@@ -1,12 +1,36 @@
 import { z } from 'zod';
 
+const originUrl = z.string().url();
+
+export function allowedWebOrigins(value: string): string[] {
+  return value
+    .split(',')
+    .map((part) => part.trim().replace(/\/$/, ''))
+    .filter((part) => part.length > 0);
+}
+
+export function canonicalWebOrigin(value: string): string {
+  return allowedWebOrigins(value)[0] ?? '';
+}
+
 export const envSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
     .default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   APP_URL: z.string().url(),
-  WEB_ORIGIN: z.string().url(),
+  WEB_ORIGIN: z.string().superRefine((value, ctx) => {
+    const origins = allowedWebOrigins(value);
+    if (
+      origins.length === 0 ||
+      origins.some((origin) => !originUrl.safeParse(origin).success)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'must be one or more http(s) URLs',
+      });
+    }
+  }),
   AUTH_SECRET: z.string().min(32),
   MASTER_DATABASE_URL: z
     .string()

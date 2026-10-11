@@ -4,7 +4,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import type { Application } from 'express';
 import { AppModule } from './app.module';
-import type { Env } from './config/env';
+import { allowedWebOrigins, type Env } from './config/env';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { rawBody: true });
@@ -14,7 +14,7 @@ async function bootstrap(): Promise<void> {
   app.use(helmet());
   app.use(cookieParser());
   app.enableCors({
-    origin: config.get('WEB_ORIGIN', { infer: true }),
+    origin: allowedWebOrigins(config.get('WEB_ORIGIN', { infer: true })),
     credentials: true,
   });
   app.enableShutdownHooks();

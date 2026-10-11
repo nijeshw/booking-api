@@ -11,7 +11,7 @@ import { MAILER } from '../../auth/auth.tokens';
 import type { Mailer } from '../../auth/store/auth.store';
 import { CLOCK } from '../../common/clock';
 import { utcNow } from '../../common/time';
-import type { Env } from '../../config/env';
+import { canonicalWebOrigin, type Env } from '../../config/env';
 import { TENANT_STORE } from '../../master/tenancy/tenancy.tokens';
 import type { TenantStore } from '../../master/tenancy/tenant.store';
 import { BOOKING_STORE } from '../booking/booking.tokens';
@@ -60,7 +60,7 @@ export class NotificationService
     @Optional() @Inject(INBOX_STORE) private readonly inbox?: InboxStore,
   ) {
     this.now = now ?? utcNow;
-    this.origin = config.get('WEB_ORIGIN', { infer: true }).replace(/\/$/, '');
+    this.origin = canonicalWebOrigin(config.get('WEB_ORIGIN', { infer: true }));
   }
 
   onModuleInit(): void {

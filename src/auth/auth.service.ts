@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
-import type { Env } from '../config/env';
+import { canonicalWebOrigin, type Env } from '../config/env';
 import type {
   AuthStore,
   Mailer,
@@ -337,7 +337,9 @@ export class AuthService {
     token: string,
     path: 'verify-email' | 'reset-password',
   ): Promise<void> {
-    const origin = this.config.getOrThrow('WEB_ORIGIN', { infer: true });
+    const origin = canonicalWebOrigin(
+      this.config.getOrThrow('WEB_ORIGIN', { infer: true }),
+    );
     try {
       await this.mailer.send({
         to,

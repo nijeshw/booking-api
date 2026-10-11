@@ -10,7 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { DateTime } from 'luxon';
 
-import type { Env } from '../../config/env';
+import { canonicalWebOrigin, type Env } from '../../config/env';
 import { allows } from '../../tenant/roles/permission';
 import type { TenantAccess } from '../tenancy/tenant.types';
 import type { BillingSnapshot } from './billing.snapshot';
@@ -153,9 +153,9 @@ export class BillingService {
     if (!email) {
       throw new NotFoundException('Account not found');
     }
-    const origin = this.config
-      .get('WEB_ORIGIN', { infer: true })
-      .replace(/\/$/, '');
+    const origin = canonicalWebOrigin(
+      this.config.get('WEB_ORIGIN', { infer: true }),
+    );
     const session = await this.stripe.createCheckout({
       priceId: plan.stripePriceId,
       customerId: current?.stripeCustomerId ?? null,
@@ -179,9 +179,9 @@ export class BillingService {
     if (!current?.stripeCustomerId) {
       throw new BadRequestException('Subscribe before managing billing');
     }
-    const origin = this.config
-      .get('WEB_ORIGIN', { infer: true })
-      .replace(/\/$/, '');
+    const origin = canonicalWebOrigin(
+      this.config.get('WEB_ORIGIN', { infer: true }),
+    );
     return this.stripe.createPortal({
       customerId: current.stripeCustomerId,
       returnUrl: `${origin}/businesses/${access.tenant.slug}/billing`,
